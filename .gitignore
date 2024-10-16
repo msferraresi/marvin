@@ -1,0 +1,6 @@
+.DS_Store
+config/.DS_Store
+src/.DS_Store
+src/controllers/.DS_Store
+src/models/.DS_Store
+src/services/.DS_Store
