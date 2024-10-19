@@ -10,14 +10,14 @@ class NgrokManager:
         self.ngrok_process = None
         self.ngrok_url = None
 
-    def run_ngrok(self):
+    def run_ngrok(self, port):
         ngrok_path = os.path.join(os.getcwd(), "resources", "ngrok.exe")
 
         if not os.path.exists(ngrok_path):
             raise FileNotFoundError(f"No se encontró ngrok en {ngrok_path}")
 
         self.ngrok_process = subprocess.Popen(
-            [ngrok_path, "http", "127.0.0.1:5002"],
+            [ngrok_path, "http", f"127.0.0.1:{port}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
