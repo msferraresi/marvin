@@ -8,10 +8,10 @@ import signal
 ngrok_manager = None
 
 
-def run_ngrok_and_set_webhook(bot_token):
+def run_ngrok_and_set_webhook(bot_token, port):
     global ngrok_manager
     ngrok_manager = NgrokManager(bot_token)
-    ngrok_manager.run_ngrok()
+    ngrok_manager.run_ngrok(port)
     time.sleep(5)
 
     if public_url := ngrok_manager.get_public_url():
@@ -36,21 +36,25 @@ def main():
     app = create_app(environment)
 
     bot_token = app.config.get("TELEGRAM_TOKEN")
-
-    if not bot_token:
-        print("Error: BOT_TOKEN no encontrado en la configuración.")
+    run_port = app.config.get("RUN_PORT")
+    if not bot_token or run_port:
+        print("Error: TELEGRAM_TOKEN o RUN_PORT no encontrado en la configuración.")
         sys.exit(1)
 
     if environment == "development":
         ngrok_thread = threading.Thread(
-            target=run_ngrok_and_set_webhook, args=(bot_token,)
+            target=run_ngrok_and_set_webhook,
+            args=(
+                bot_token,
+                run_port,
+            ),
         )
         ngrok_thread.start()
 
     signal.signal(signal.SIGINT, signal_handler)
 
     # Ejecutar la app Flask en el puerto 5002
-    app.run(port=5002)
+    app.run(port=run_port)
 
     # Esperar a que ngrok termine
     if environment == "development":
