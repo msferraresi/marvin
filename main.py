@@ -5,14 +5,12 @@ from src import create_app
 from ngrok_manager import NgrokManager  # Asegúrate de tener este archivo
 import signal
 
-environment = "development"
-BOT_TOKEN = ""
 ngrok_manager = None
 
 
-def run_ngrok_and_set_webhook():
+def run_ngrok_and_set_webhook(bot_token):
     global ngrok_manager
-    ngrok_manager = NgrokManager(BOT_TOKEN)
+    ngrok_manager = NgrokManager(bot_token)
     ngrok_manager.run_ngrok()
     time.sleep(5)
 
@@ -32,18 +30,23 @@ def signal_handler(sig, frame):
 
 def main():
     global environment
-    if len(sys.argv) > 1 and sys.argv[1] == "prod":
-        environment = "production"
 
-    # Solo ejecutar ngrok si estamos en el entorno de desarrollo
-    if environment == "development":
-        ngrok_thread = threading.Thread(target=run_ngrok_and_set_webhook)
-        ngrok_thread.start()
+    environment = "development" if len(sys.argv) == 1 else sys.argv[1]
 
-    # Crear la app Flask
     app = create_app(environment)
 
-    # Registrar el manejador de señal para cerrar ngrok al apagar la app
+    bot_token = app.config.get("TELEGRAM_TOKEN")
+
+    if not bot_token:
+        print("Error: BOT_TOKEN no encontrado en la configuración.")
+        sys.exit(1)
+
+    if environment == "development":
+        ngrok_thread = threading.Thread(
+            target=run_ngrok_and_set_webhook, args=(bot_token,)
+        )
+        ngrok_thread.start()
+
     signal.signal(signal.SIGINT, signal_handler)
 
     # Ejecutar la app Flask en el puerto 5002
