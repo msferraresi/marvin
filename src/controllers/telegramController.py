@@ -1,12 +1,15 @@
 import json
-from pprint import pprint
+
+# from pprint import pprint
 from flask import current_app
 import requests
 import unicodedata
+from src import db
 
-from src.controllers.chatGPTController import ChatGPTController
-from src.controllers.geminiController import GeminiController
+# from src.controllers.OLD_chatGPTController_OLD import ChatGPTController
+# from src.controllers.OLD_geminiController_OLD import GeminiController
 
+from src.controllers import AssistantController
 from src.models import IntentsSchema, Intents
 
 CHATGPT_API_KEY = current_app.config["CHATGPT_API_KEY"]
@@ -17,12 +20,17 @@ schemaIntents = IntentsSchema()
 
 
 class TelegramController:
-    def __init__(self, data):
+    def __init__(self, data, assistant_manager: AssistantController):
         self.data = data
         chat_id, text, payload_type = self.get_chat_data()
         self.chat_id = chat_id
         self.text = text
         self.payload_type = payload_type
+        self.valid_intents = [
+            i.intent_type
+            for i in Intents.query.with_entities(Intents.intent_type).all()
+        ]
+        self.assistant_manager = assistant_manager
 
     def get_chat_data(self):
         if message_data := self.data.get("message") or self.data.get("edited_message"):
@@ -84,15 +92,36 @@ class TelegramController:
                 result = self.handle_known_intent(intent.intent_type, chat_id)
             else:
                 # Intentar identificar la intención con Gemini
-                intent = GeminiController.ask_gemini_for_intent(
+                intent = self.assistant_manager.get_intent(
                     filtered_text,
-                    " Entre las siguientes: greeting, farewell, help, other. Responde solo con las opciones dadas",
+                    f"Entre las siguientes: {', '.join(self.valid_intents)}, other. Responde solo con las opciones dadas",
                 )
+                # intent = GeminiController.ask_gemini_for_intent(
+                #     filtered_text,
+                #     f"Entre las siguientes: {', '.join(self.valid_intents)}, other. Responde solo con las opciones dadas",
+                # )
                 # print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
                 # print(f"INTENT: {intent}")
                 # print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
                 # # Si no se pudo identificar con Gemini, intentar con ChatGPT
-                if intent.strip() in ["greeting", "farewell", "help"]:
+                if intent.strip() in self.valid_intents:
+                    # Almacenar el nuevo intent en la base de datos
+                    try:
+                        # Crear una nueva instancia del modelo Intents
+                        new_intent = Intents(
+                            intent_type=intent.strip(), keyword=filtered_text
+                        )
+
+                        # Agregarlo a la sesión de la base de datos
+                        db.session.add(new_intent)
+                        db.session.commit()  # Confirmar los cambios
+
+                        print(
+                            f"Intent '{intent.strip()}' guardado en la base de datos."
+                        )
+                    except Exception as e:
+                        db.session.rollback()  # Revertir si hay algún error
+                        print(f"Error guardando el intent en la base de datos: {e}")
                     result = self.handle_known_intent(intent.strip(), chat_id)
                 else:
                     # Intentar con ChatGPT si Gemini no da un resultado claro
@@ -142,19 +171,20 @@ class TelegramController:
             # rta = ChatGPTController.ask_chatgpt_for_response(
             #     "la intención es desconocida"
             # )
-            rta = GeminiController.ask_gemini_for_response(
-                "la intención es desconocida"
-            )
+            rta = self.assistant_manager.get_response("la intención es desconocida")
+            # rta = GeminiController.ask_gemini_for_response(
+            #     "la intención es desconocida"
+            # )
         except Exception as e:
             print(f"Error con ChatGPT: {e}")
-            try:
-                # Si ChatGPT falla, intentamos con Google Generative AI
-                rta = GeminiController.ask_gemini_for_response(
-                    "la intención es desconocida"
-                )
-            except Exception as google_error:
-                print(f"Error con Google Generative AI: {google_error}")
-                rta = "Lo siento, en este momento no puedo procesar tu solicitud con ninguno de los servicios disponibles."
+            # try:
+            #     # Si ChatGPT falla, intentamos con Google Generative AI
+            #     rta = GeminiController.ask_gemini_for_response(
+            #         "la intención es desconocida"
+            #     )
+            # except Exception as google_error:
+            #     print(f"Error con Google Generative AI: {google_error}")
+            rta = "Lo siento, en este momento no puedo procesar tu solicitud con ninguno de los servicios disponibles."
 
         return self.send_text_message(chat_id, rta)
 
@@ -166,7 +196,16 @@ class TelegramController:
         return self.send_text_message(chat_id, "¡Adiós! Hasta luego.")
 
     def handle_text_help(self, chat_id):
-        return self.send_text_message(chat_id, "Esto es un mensaje de ayuda.")
+        help_message = """
+                Los comandos que puedes ejecutar son los siguientes:
+
+                - *saludos*: Te permite enviar un saludo.
+                - *despedidas*: Te permite enviar una despedida.
+                - *ayudas*: Te muestra este mensaje de ayuda con los comandos disponibles.
+
+                Escribe cualquiera de estos comandos para interactuar conmigo.
+                """
+        return self.send_text_message(chat_id, help_message)
 
     # ---------------------------------------------------ACTIONS
     def send_text_message(self, chat_id, text):

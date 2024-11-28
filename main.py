@@ -1,3 +1,4 @@
+import pprint
 import sys
 import time
 import threading
@@ -34,10 +35,13 @@ def main():
     environment = "development" if len(sys.argv) == 1 else sys.argv[1]
 
     app = create_app(environment)
-
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    pprint.pprint(app.config.get("RUN_PORT"))
+    print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
     bot_token = app.config.get("TELEGRAM_TOKEN")
     run_port = app.config.get("RUN_PORT")
-    if not bot_token or run_port:
+
+    if not bot_token or not run_port:
         print("Error: TELEGRAM_TOKEN o RUN_PORT no encontrado en la configuración.")
         sys.exit(1)
 

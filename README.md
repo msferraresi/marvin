@@ -38,12 +38,30 @@ git clone https://github.com/tuusuario/marvin.git
 cd marvin
 ```
 
-1. Ajustar la configuracion en los archivos que se encuentran en la carpeta `config` dentro del raíz del proyecto y configurar las claves de API necesarias:
+1. Ajustar la configuracion en la carpeta `config` dentro del raíz del proyectp se deben crear los archivos configDEV y configPROD:
 
 ```bash
-GEMINI_API_KEY=your_gemini_api_key
-CHATGPT_API_KEY=your_chatgpt_api_key
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+class Config:
+    """Configuración general"""
+
+    DEBUG = False  # Desactivado en producción
+    TESTING = False
+    TELEGRAM_TOKEN = "your_telegram_bot_token"
+    TELEGRAM_API = "https://api.telegram.org/bot[TOKEN]/"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    CHATGPT_API_KEY = "your_chatgpt_api_key"
+    GEMINI_API_KEY = "your_gemini_api_key"
+
+
+class XXXXXXXXXXXXXXConfig(Config): #Reemplazar las X con el nombre del entorno (Production o Development)
+    """Configuración para el entorno"""
+
+    ENV = "Nombre del environment (development or production)"
+    SECRET_KEY = "Secret KEY"
+    NAME_DB = "Nombre de la BD"
+    SQLALCHEMY_DATABASE_URI = f"sqlite:///{NAME_DB}_{ENV}.db"
+    RUN_PORT = "PUERTO DONDE CORRE LA APLICACION"
+
 ```
 
 3. Configurar el archivo `configXXX.py` para manejar otros ajustes relevantes de la aplicación.
