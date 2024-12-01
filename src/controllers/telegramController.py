@@ -1,15 +1,14 @@
 import json
-from pprint import pprint
 from flask import current_app
 import requests
 import unicodedata
 import logging
+from src import db
 
-
-from src.controllers.chatGPTController import ChatGPTController
-from src.controllers.geminiController import GeminiController
-
-from src.models import IntentsSchema, Intents
+from src.controllers.assistantController import AssistantController
+from src.interfaces.chat_gpt import ChatGPT
+from src.interfaces.gemini import Gemini
+from src.models import IntentsSchema, Intents, IntentTypes, IntentTypesSchema
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +17,7 @@ CHATGPT_API_KEY = current_app.config["CHATGPT_API_KEY"]
 TOKEN = current_app.config["TELEGRAM_TOKEN"]
 BASE_URL = current_app.config["TELEGRAM_API"].replace("[TOKEN]", TOKEN)
 schemaIntents = IntentsSchema()
+schemaIntentsType = IntentTypesSchema()
 
 
 class TelegramController:
@@ -28,6 +28,16 @@ class TelegramController:
         self.chat_id = chat_id
         self.text = text
         self.payload_type = payload_type
+        assistants = [ChatGPT(), Gemini()]
+
+        assistant_manager = AssistantController(assistants)
+        self.assistant_manager = assistant_manager
+        self.valid_intents = [
+            {"id": intent_type.id, "description": intent_type.description}
+            for intent_type in IntentTypes.query.with_entities(
+                IntentTypes.id, IntentTypes.description
+            ).all()
+        ]
         logger.info(
             f"Datos del chat extraídos: chat_id={chat_id}, text={text}, payload_type={payload_type}"
         )
@@ -61,10 +71,10 @@ class TelegramController:
             handler_payload_type(self.chat_id)
         else:
             logger.warning(f"Tipo de payload desconocido: {self.payload_type}")
-            self.handle_unknown_payload(self.chat_id)
+            self.handle_unknown_payload(self.chat_id, self.text)
         return self.data
 
-    def handle_known_intent(self, intent, chat_id):
+    def handle_known_intent(self, intent, chat_id, text):
         logger.info(f"Procesando intención conocida: {intent}")
         intent_handlers = {
             "greeting": self.handle_text_greeting,
@@ -76,7 +86,7 @@ class TelegramController:
             return handler(chat_id)
         else:
             logger.warning(f"Intención no manejada: {intent}")
-            self.handle_unknown_payload(chat_id)
+            self.handle_unknown_payload(chat_id, text)
 
     # ---------------------------------------------------HANDLERS PAYLOAD TYPE
     def handle_text_payload(self, chat_id):
@@ -84,32 +94,55 @@ class TelegramController:
         text = self.text.strip()
         text = text.replace("/", "").replace("\\", "")
         result = ""
+
         if filtered_text := self.remove_emojis(text).strip():
             logger.info(f"Texto filtrado: {filtered_text}")
+
+            # Buscar intent conocido en la base de datos
             if intent := Intents.query.filter_by(keyword=filtered_text).first():
                 logger.info(
-                    f"Intención encontrada en la base de datos: {intent.intent_type}"
+                    f"Intención encontrada en la base de datos: {intent.intent_type.description}"
                 )
-                result = self.handle_known_intent(intent.intent_type, chat_id)
+                result = self.handle_known_intent(
+                    intent.intent_type.description, chat_id, filtered_text
+                )
             else:
                 logger.warning(
                     "Intención no encontrada en la base de datos, intentando identificarla con Gemini."
                 )
-                intent = GeminiController.ask_gemini_for_intent(
+
+                # Obtener intent válido desde Gemini
+                intent_descriptions = [
+                    intent["description"] for intent in self.valid_intents
+                ]
+                intent = self.assistant_manager.get_intent(
                     filtered_text,
-                    "Entre las siguientes: greeting, farewell, help, other. Responde solo con las opciones dadas",
+                    f" Entre las siguientes: {', '.join(intent_descriptions)}, other. Responde solo con las opciones dadas",
                 )
                 logger.info(f"Respuesta de Gemini: {intent}")
-                if intent.strip() in ["greeting", "farewell", "help"]:
-                    result = self.handle_known_intent(intent.strip(), chat_id)
+                # Validar si el intent está en las descripciones válidas
+                if intent.strip().lower() in intent_descriptions:
+                    try:
+                        # Guardar nuevo intent en la base de datos
+                        self.save_intent_to_db(intent.strip().lower(), filtered_text)
+                        result = self.handle_known_intent(
+                            intent.strip(), chat_id, filtered_text
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error guardando el intent en la base de datos: {e}"
+                        )
+                        self.handle_unknown_payload(chat_id, filtered_text)
                 else:
-                    logger.warning("Gemini no identificó una intención clara.")
-                    self.handle_unknown_payload(chat_id)
+                    logger.warning(
+                        f"Gemini no identificó una intención clara: {filtered_text}"
+                    )
+                    self.handle_unknown_payload(chat_id, filtered_text)
         else:
             logger.warning("El texto contiene solo emojis o caracteres irreconocibles.")
             self.send_text_message(
                 chat_id,
-                "Recibido solo un emoji.\nAún no sé qué hacer con este tipo de mensaje",
+                "Recibido solo un emoji.\nAún no sé qué hacer con este tipo de mensaje.",
             )
 
         return result
@@ -142,33 +175,13 @@ class TelegramController:
             "Recibido un documento.\nAún no sé qué hacer con este tipo de mensaje",
         )
 
-    # def handle_unknown_payload(self, chat_id):
-    #     try:
-    #         # Intentamos con ChatGPT
-    #         # rta = ChatGPTController.ask_chatgpt_for_response(
-    #         #     "la intención es desconocida"
-    #         # )
-    #         rta = GeminiController.ask_gemini_for_response(
-    #             "la intención es desconocida"
-    #         )
-    #     except Exception as e:
-    #         print(f"Error con ChatGPT: {e}")
-    #         try:
-    #             # Si ChatGPT falla, intentamos con Google Generative AI
-    #             rta = GeminiController.ask_gemini_for_response(
-    #                 "la intención es desconocida"
-    #             )
-    #         except Exception as google_error:
-    #             print(f"Error con Google Generative AI: {google_error}")
-    #             rta = "Lo siento, en este momento no puedo procesar tu solicitud con ninguno de los servicios disponibles."
-
-    #     return self.send_text_message(chat_id, rta)
-    def handle_unknown_payload(self, chat_id):
+    def handle_unknown_payload(self, chat_id, text=None):
         logger.warning("Procesando payload desconocido.")
         try:
-            rta = GeminiController.ask_gemini_for_response(
-                "la intención es desconocida"
-            )
+            intent = "la intención es desconocida"
+            if len(text) > 0:
+                intent += f" y el texto es: {text}"
+            rta = self.assistant_manager.get_response(intent)
             logger.info("Respuesta obtenida de Gemini.")
         except Exception as e:
             logger.error(f"Error al procesar con Gemini: {e}")
@@ -186,7 +199,16 @@ class TelegramController:
 
     def handle_text_help(self, chat_id):
         logger.info("Enviando mensaje de ayuda.")
-        return self.send_text_message(chat_id, "Esto es un mensaje de ayuda.")
+        help_message = """
+            Los comandos que puedes ejecutar son los siguientes:
+
+            - *saludos*: Te permite enviar un saludo.
+            - *despedidas*: Te permite enviar una despedida.
+            - *ayudas*: Te muestra este mensaje de ayuda con los comandos disponibles.
+
+            Escribe cualquiera de estos comandos para interactuar conmigo.
+            """
+        return self.send_text_message(chat_id, help_message)
 
     # ---------------------------------------------------ACTIONS
     def send_text_message(self, chat_id, text):
@@ -294,3 +316,26 @@ class TelegramController:
         return "".join(
             char for char in text if not unicodedata.category(char).startswith("So")
         )
+
+    def save_intent_to_db(self, intent_type, keyword):
+        """Guarda un intent en la base de datos."""
+        try:
+            logger.debug(f"Intent Type: {intent_type}, Keyword: {keyword}")
+
+            # Obtiene el ID del intent_type a partir de la descripción
+            intent_type_obj = IntentTypes.query.filter_by(
+                description=intent_type
+            ).first()
+            if not intent_type_obj:
+                raise ValueError(
+                    f"El intent_type '{intent_type}' no existe en la base de datos."
+                )
+
+            # Crea y guarda el nuevo intent
+            new_intent = Intents(intent_type_id=intent_type_obj.id, keyword=keyword)
+            db.session.add(new_intent)
+            db.session.commit()
+            logger.info(f"Intent '{intent_type}' guardado en la base de datos.")
+        except Exception as e:
+            db.session.rollback()  # Limpia la sesión en caso de error
+            logger.error(f"Error guardando el intent en la base de datos: {e}")

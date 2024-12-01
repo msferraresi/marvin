@@ -26,32 +26,43 @@ def create_app(environment=None):
 
     with app.app_context():
         from src.models.intentsModel import Intents
+        from src.models.intent_typesModel import IntentTypes
 
+        create_initial_data(
+            IntentTypes,
+            [
+                {"description": "greeting"},
+                {"description": "farewell"},
+                {"description": "help"},
+                {"description": "information"},
+            ],
+        )
         create_initial_data(
             Intents,
             [
-                {"intent_type": "greeting", "keyword": "hola"},
-                {"intent_type": "greeting", "keyword": "ola"},
-                {"intent_type": "greeting", "keyword": "buenas"},
-                {"intent_type": "greeting", "keyword": "buenos dias"},
-                {"intent_type": "greeting", "keyword": "buenas tardes"},
-                {"intent_type": "greeting", "keyword": "buenas noches"},
-                {"intent_type": "greeting", "keyword": "saludos"},
-                {"intent_type": "greeting", "keyword": "que tal"},
-                {"intent_type": "farewell", "keyword": "adios"},
-                {"intent_type": "farewell", "keyword": "hasta luego"},
-                {"intent_type": "farewell", "keyword": "chau"},
-                {"intent_type": "farewell", "keyword": "nos vemos"},
-                {"intent_type": "farewell", "keyword": "asta luego"},
-                {"intent_type": "help", "keyword": "ayuda"},
-                {"intent_type": "help", "keyword": "info"},
-                {"intent_type": "help", "keyword": "informacion"},
-                {"intent_type": "help", "keyword": "que puedo hacer"},
-                {"intent_type": "help", "keyword": "que puedo pedir"},
-                {"intent_type": "help", "keyword": "que puedo solicitar"},
-                {"intent_type": "help", "keyword": "socorro"},
-                {"intent_type": "help", "keyword": "ayudame"},
-                {"intent_type": "help", "keyword": "no entiendo nada"},
+                {"intent_type_id": 1, "keyword": "hola"},
+                {"intent_type_id": 1, "keyword": "ola"},
+                {"intent_type_id": 1, "keyword": "buenas"},
+                {"intent_type_id": 1, "keyword": "buenos dias"},
+                {"intent_type_id": 1, "keyword": "buenas tardes"},
+                {"intent_type_id": 1, "keyword": "buenas noches"},
+                {"intent_type_id": 1, "keyword": "saludos"},
+                {"intent_type_id": 1, "keyword": "que tal"},
+                {"intent_type_id": 2, "keyword": "adios"},
+                {"intent_type_id": 2, "keyword": "hasta luego"},
+                {"intent_type_id": 2, "keyword": "chau"},
+                {"intent_type_id": 2, "keyword": "nos vemos"},
+                {"intent_type_id": 2, "keyword": "asta luego"},
+                {"intent_type_id": 3, "keyword": "ayuda"},
+                {"intent_type_id": 3, "keyword": "info"},
+                {"intent_type_id": 3, "keyword": "informacion"},
+                {"intent_type_id": 3, "keyword": "que puedo hacer"},
+                {"intent_type_id": 3, "keyword": "que puedo pedir"},
+                {"intent_type_id": 3, "keyword": "que puedo solicitar"},
+                {"intent_type_id": 3, "keyword": "socorro"},
+                {"intent_type_id": 3, "keyword": "ayudame"},
+                {"intent_type_id": 3, "keyword": "no entiendo nada"},
+                {"intent_type_id": 4, "keyword": "como te llamas?"},
             ],
         )
     return app

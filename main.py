@@ -34,7 +34,7 @@ def run_ngrok_and_set_webhook(bot_token, port):
     global ngrok_manager
     ngrok_manager = NgrokManager(bot_token)
     ngrok_manager.run_ngrok(port)
-    time.sleep(5)
+    time.sleep(10)
 
     if public_url := ngrok_manager.get_public_url():
         ngrok_manager.set_telegram_webhook(public_url)
