@@ -11,6 +11,7 @@ class Config:
     MINIMUN_LOGGER_DETAIL = "INFO"
 
 
+
 class DevelopmentConfig(Config):
     """Configuración para el entorno de desarrollo"""
 
