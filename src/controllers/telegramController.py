@@ -27,6 +27,7 @@ class TelegramController:
         self.chat_id = None
         self.text = None
         self.payload_type = None
+        self.pending_actions = {}
         assistants = [
             {"ia": ChatGPT(), "status": current_app.config.get("CHATGPT", False)},
             {"ia": Gemini(), "status": current_app.config.get("GEMINI", False)},
@@ -40,15 +41,26 @@ class TelegramController:
         ]
 
     def get_chat_data(self):
-        logger.debug("Extrayendo datos del mensaje...")
+        logger.debug("Extrayendo datos del mensaje o callback...")
         if message_data := self.data.get("message") or self.data.get("edited_message"):
+            # Caso estándar: mensajes de texto
             chat_id = message_data.get("chat", {}).get("id")
             text = message_data.get("text")
             payload_type = list(message_data.keys())[-1]
             logger.info("Datos extraídos exitosamente del mensaje.")
             return chat_id, text, payload_type
-        logger.warning("No se encontraron datos válidos en el mensaje.")
-        return None, None, None
+        elif callback_data := self.data.get("callback_query"):
+            # Caso especial: callback de botones
+            chat_id = callback_data.get("message", {}).get("chat", {}).get("id")
+            text = callback_data.get(
+                "data"
+            )  # Este es el 'callback_data' definido en el botón
+            payload_type = "callback"
+            logger.info("Datos extraídos exitosamente del callback.")
+            return chat_id, text, payload_type
+        else:
+            logger.warning("No se encontraron datos válidos en el mensaje o callback.")
+            return None, None, None
 
     def process_data(self, data):
         logger.debug(f"Procesando datos: {self.data}")
@@ -69,10 +81,7 @@ class TelegramController:
         logger.info(f"Procesando payload_type: {self.payload_type}")
         if handler_payload_type := {
             "text": self.handle_text_payload,
-            "photo": self.handle_photo_payload,
-            "voice": self.handle_voice_payload,
-            "sticker": self.handle_sticker_payload,
-            "document": self.handle_document_payload,
+            "callback": self.handle_callback_payload,
         }.get(self.payload_type):
             handler_payload_type(self.chat_id)
         else:
@@ -86,6 +95,31 @@ class TelegramController:
         text = self.text.strip()
         text = text.replace("/", "").replace("\\", "")
         result = ""
+        action = self.pending_actions.get(chat_id)
+
+        if action:
+            # Si estamos esperando el nombre de usuario
+            if action["status"] == "awaiting_username":
+                self.pending_actions[chat_id]["username"] = text
+                self.pending_actions[chat_id]["status"] = "awaiting_password"
+                return self.send_text_message(
+                    chat_id, "Gracias, ahora envíame tu contraseña para Redmine."
+                )
+
+            # Si estamos esperando la contraseña
+            elif action["status"] == "awaiting_password":
+                self.pending_actions[chat_id]["password"] = text
+                self.pending_actions[chat_id]["status"] = "authenticated"
+                # return self.send_text_message(
+                #     chat_id,
+                #     "Credenciales guardadas. ¡Gracias! Ahora puedo proceder con tu solicitud.",
+                # )
+                self.send_text_message(
+                    chat_id,
+                    "Credenciales guardadas. ¡Gracias! Ahora puedo proceder con tu solicitud.",
+                )
+                # Reanudar la acción original
+                return self.handle_information(chat_id)
 
         if filtered_text := self.remove_emojis(text).strip():
             logger.info(f"Texto filtrado: {filtered_text}")
@@ -139,33 +173,20 @@ class TelegramController:
 
         return result
 
-    def handle_photo_payload(self, chat_id):
-        logger.debug("Procesando payload de tipo imagen.")
-        return self.send_text_message(
-            chat_id,
-            "Recibido una imagen.\nAún no sé qué hacer con este tipo de mensaje",
-        )
+    def handle_callback_payload(self, chat_id):
+        logger.info(f"Procesando callback: {self.text}")
+        callback_data = self.text
 
-    def handle_voice_payload(self, chat_id):
-        logger.debug("Procesando payload de tipo mensaje de voz.")
-        return self.send_text_message(
-            chat_id,
-            "Recibido un mensaje de voz.\nAún no sé qué hacer con este tipo de mensaje",
-        )
-
-    def handle_sticker_payload(self, chat_id):
-        logger.debug("Procesando payload de tipo sticker.")
-        return self.send_text_message(
-            chat_id,
-            "Recibido un sticker.\nAún no sé qué hacer con este tipo de mensaje",
-        )
-
-    def handle_document_payload(self, chat_id):
-        logger.debug("Procesando payload de tipo documento.")
-        return self.send_text_message(
-            chat_id,
-            "Recibido un documento.\nAún no sé qué hacer con este tipo de mensaje",
-        )
+        if callback_data == "enter_username":
+            self.send_text_message(chat_id, "Por favor, escribe tu usuario de Redmine.")
+            self.pending_actions[chat_id] = {"status": "awaiting_username"}
+        elif callback_data == "enter_password":
+            self.send_text_message(
+                chat_id, "Por favor, escribe tu contraseña de Redmine."
+            )
+            self.pending_actions[chat_id] = {"status": "awaiting_password"}
+        else:
+            self.send_text_message(chat_id, f"Opción desconocida: {callback_data}")
 
     # ---------------------------------------------------HANDLERS PAYLOAD
     def handle_unknown_payload(self, chat_id, text=None):
@@ -220,8 +241,70 @@ class TelegramController:
         return self.send_text_message(chat_id, help_message)
 
     def handle_information(self, chat_id):
-        logger.info("request_credentials_template")
-        return self.request_credentials_template(chat_id)
+        logger.info(f"Procesando intención 'information' para el texto: {self.text}")
+
+        # Prompt para analizar subintenciones
+        prompt = (
+            f"Un usuario preguntó: '{self.text}'. "
+            "Determina si la intención es 'nombre', 'horas_actuales' o 'horas_anteriores'. "
+            "Responde solo con una de esas opciones."
+        )
+
+        try:
+            # Usar IA para determinar la subintención (nombre, horas actuales o anteriores)
+            sub_intent = self.assistant_manager.get_intent(prompt).strip().lower()
+            logger.info(f"Subintención detectada: {sub_intent}")
+
+            if sub_intent == "nombre":
+                # Responder al usuario con el nombre del asistente
+                return self.send_text_message(
+                    chat_id, "Soy Marvin, tu asistente personal."
+                )
+
+            elif sub_intent == "horas_actuales" or sub_intent == "horas_anteriores":
+                # Verificar si ya tenemos las credenciales
+                action = self.pending_actions.get(chat_id)
+                if not action or action["status"] not in [
+                    "awaiting_username",
+                    "awaiting_password",
+                ]:
+                    # Si no tenemos credenciales, pedirlas
+                    return self.request_credentials_template(chat_id)
+
+                # Si tenemos credenciales, autenticamos en Redmine y consultamos las horas
+                username = self.pending_actions[chat_id]["username"]
+                password = self.pending_actions[chat_id]["password"]
+                print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+                print(f"USER: {username} PASS: {password}")
+                print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+                try:
+                    # Autenticar en Redmine
+                    # self.redmine_service.authenticate(username, password)
+
+                    # Consultar las horas según el período (actual o anterior)
+                    # period = "current_month" if sub_intent == "horas_actuales" else "last_month"
+                    # hours = self.redmine_service.get_hours(username, period)
+                    hours = 0
+                    period = "este mes"
+                    message = (
+                        f"Llevas {hours} horas cargadas este mes."
+                        if period == "current_month"
+                        else f"Cargaste {hours} horas el mes pasado."
+                    )
+                    return self.send_text_message(chat_id, message)
+                except Exception as e:
+                    logger.error(f"Error al consultar Redmine: {e}")
+                    return self.send_text_message(
+                        chat_id, f"No pude autenticarte en Redmine. Error: {str(e)}"
+                    )
+
+            else:
+                logger.warning(f"Subintención desconocida: {sub_intent}")
+                return self.handle_unknown_payload(chat_id, self.text)
+
+        except Exception as e:
+            logger.error(f"Error al procesar subintención: {e}")
+            return self.handle_unknown_payload(chat_id, self.text)
 
     def handle_register(self, chat_id):
         logger.info("Enviando mensaje de saludo.")
@@ -232,39 +315,21 @@ class TelegramController:
     def request_credentials_template(self, chat_id):
         keyboard = {
             "inline_keyboard": [
-                [{"text": "Ingresar Usuario", "callback_data": "enter_username"}],
-                [{"text": "Ingresar Contraseña", "callback_data": "enter_password"}],
+                [{"text": "Ingresar Credenciales", "callback_data": "enter_username"}],
             ]
         }
-        return self.send_text_message2(
+        return self.send_text_message(
             chat_id,
             "Por favor, ingresa tus credenciales de Redmine usando los botones:",
             reply_markup=keyboard,
         )
 
-    def send_text_message(self, chat_id, text):
+    def send_text_message(self, chat_id, text, reply_markup=None):
         logger.debug(f"Enviando mensaje al chat_id={chat_id} con texto: {text}")
         url = f"{BASE_URL}sendMessage"
         if chat_id is None or text is None:
             logger.error("chat_id y texto son requeridos para enviar un mensaje.")
             raise ValueError("chat_id and text are required")
-        payload = {"chat_id": chat_id, "text": text}
-        response = requests.post(url, json=payload)
-        logger.info(f"Mensaje enviado con éxito: {response.status_code}")
-        return response
-
-    def send_text_message2(self, chat_id, text, reply_markup=None):
-        """
-        Envía un mensaje de texto a un usuario de Telegram.
-
-        Args:
-            chat_id (int): ID del chat de Telegram al que se envía el mensaje.
-            text (str): El texto del mensaje a enviar.
-            reply_markup (dict, optional): Teclado u opciones adicionales para el mensaje.
-        Returns:
-            Response: Respuesta HTTP de la API de Telegram.
-        """
-        url = f"{BASE_URL}sendMessage"
         payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
 
         if reply_markup:
@@ -278,95 +343,6 @@ class TelegramController:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error al enviar mensaje a chat_id={chat_id}: {e}")
             raise
-
-    def send_poll_message(
-        self,
-        chat_id,
-        text,
-        options,
-        is_anonymous=False,
-        type_poll="quiz",
-        correct_opt_poll=0,
-    ):
-        logger.debug(f"Enviando encuesta al chat_id={chat_id} con texto: {text}")
-        url = f"{BASE_URL}sendPoll"
-        if chat_id is None or text is None or options is None:
-            logger.error(
-                "chat_id, texto y opciones son requeridos para enviar una encuesta."
-            )
-            raise ValueError("chat_id, text, and options are required")
-
-        payload = {
-            "chat_id": chat_id,
-            "question": text,
-            "options": json.dumps(options),
-            "is_anonymous": is_anonymous,
-            "type": type_poll,
-            "correct_option_id": correct_opt_poll,
-        }
-
-        response = requests.post(url, json=payload)
-        logger.info(f"Encuesta enviada, status_code={response.status_code}")
-        return response
-
-    def send_inlineurl_message(
-        self, chat_id, lst_url=None, text="¿Cuál enlace te gustaría visitar?"
-    ):
-        logger.debug(f"Enviando mensaje con URLs al chat_id={chat_id}.")
-        url = f"{BASE_URL}sendMessage"
-        if chat_id is None or lst_url is None:
-            logger.error(
-                "chat_id y lst_url son requeridos para enviar un mensaje con URLs."
-            )
-            raise ValueError("chat_id and lst_url are required")
-
-        # Construir botones dinámicos desde lst_url
-        inline_keyboard = [[{"text": label, "url": link} for label, link in lst_url]]
-
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "reply_markup": {"inline_keyboard": inline_keyboard},
-        }
-
-        response = requests.post(url, json=payload)
-        logger.info(f"Mensaje con URLs enviado, status_code={response.status_code}")
-        return response
-
-    def send_image_message(
-        self, chat_id, photo, caption="Esta es una imagen de ejemplo"
-    ):
-        logger.debug(f"Enviando imagen al chat_id={chat_id}.")
-        url = f"{BASE_URL}sendPhoto"
-        if chat_id is None or photo is None:
-            logger.error("chat_id y photo son requeridos para enviar una imagen.")
-            raise ValueError("chat_id and photo are required")
-
-        payload = {
-            "chat_id": chat_id,
-            "photo": photo,
-            "caption": caption,
-        }
-
-        response = requests.post(url, json=payload)
-        logger.info(f"Imagen enviada, status_code={response.status_code}")
-        return response
-
-    def send_audio_message(self, chat_id, audio):
-        logger.debug(f"Enviando audio al chat_id={chat_id}.")
-        url = f"{BASE_URL}sendAudio"
-        if chat_id is None or audio is None:
-            logger.error("chat_id y audio son requeridos para enviar un audio.")
-            raise ValueError("chat_id and audio are required")
-
-        payload = {
-            "chat_id": chat_id,
-            "audio": audio,
-        }
-
-        response = requests.post(url, json=payload)
-        logger.info(f"Audio enviado, status_code={response.status_code}")
-        return response
 
     # ---------------------------------------------------UTILS
     def remove_emojis(self, text):
