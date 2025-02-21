@@ -62,7 +62,7 @@ marvin/
 │   │   ├── intentsModel.py
 │   │   └── __init__.py
 │   ├── services/
-│   │   ├── telegramService.py
+│   │   ├── MarvinService.py
 │   │   └── __init__.py
 │   ├── utils/
 │   │   └── command.py

@@ -35,6 +35,7 @@ def create_app(environment=None):
                 {"description": "farewell"},
                 {"description": "help"},
                 {"description": "information"},
+                {"description": "register"},
             ],
         )
         create_initial_data(
